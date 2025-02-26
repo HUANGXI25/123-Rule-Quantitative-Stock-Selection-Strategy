@@ -7,16 +7,16 @@ def initialize(context):
     set_benchmark('600307.XSHG')
     set_commission(PerTrade(buy_cost=0.0003, sell_cost=0.0013, min_cost=5))
     set_slippage(PriceRelatedSlippage())
-    g.n = 5 #获取几分钟k线
-    ## 获取前几日的趋势
-    ''' temp_data 包含处理后最后一个k线的数据
-        zoushi 包含关系处理中关于走势的记录
-        after_baohan 合并后的k线'''
+    g.n = 5 # Number of minutes for K-line
+    ## Get the trend of the previous days
+    ''' temp_data contains the last processed K-line data
+        zoushi records trend information in the processing
+        after_baohan contains merged K-line data'''
     g.temp_data, g.zoushi, g.after_baohan = k_initialization(security=g.security[0],num = 10*48,n=g.n)
-    ## 每日运行一次"根据跌幅止损"、"根据大盘跌幅止损"
-    run_daily(dapan_stoploss) #根据大盘止损，如不想加入大盘止损，注释此句即可
-    # run_daily(sell) # 根据跌幅卖出
-    # run_daily(sell2) # 按天亏损率止损 & 固定止盈
+    ## Run daily: "Stop loss based on drop rate", "Stop loss based on market drop"
+    run_daily(dapan_stoploss) # Stop loss based on market conditions. If you do not want to include market stop loss, comment out this line.
+    # run_daily(sell) # Sell based on drop rate
+    # run_daily(sell2) # Stop loss based on daily loss rate & fixed profit-taking
 
 def handle_data(context, data):
     security = g.security
@@ -30,10 +30,10 @@ def handle_data(context, data):
     else:
         if minute%n==0:
             print 'time: %s:%s' %(hour,minute)
-            # 获得前n分钟的k线
+            # Get the previous n-minute K-line
             x = '%sm'%n
             temp_hist = attribute_history(security[0], 1, str(x),['high', 'low'], df=False)
-            # 包含关系处理
+            # Containment relationship processing
             Input_k = {'high':[],'low':[]}
             Input_k['high'].append(g.temp_data['high'])
             Input_k['low'].append(g.temp_data['low'])
@@ -41,32 +41,32 @@ def handle_data(context, data):
             Input_k['low'].append(temp_hist['low'][0])
             g.temp_data, g.zoushi, g.after_baohan = recognition_baohan(Input_k, g.zoushi, g.after_baohan)
 
-            # 分型
+            # Pattern recognition
             fenxing_type, fenxing_time, fenxing_plot, fenxing_data = recognition_fenxing(g.after_baohan)
             '''
-            fenxing_type 记录分型点的类型，1为顶分型，-1为底分型
-            fenxing_time 记录分型点的时间
-            fenxing_plot 记录点的数值，为顶分型去high值，为底分型去low值
-            fenxing_data 分型点的DataFrame值
+            fenxing_type records the type of pattern point, 1 for top pattern, -1 for bottom pattern
+            fenxing_time records the time of the pattern point
+            fenxing_plot records the point value, using high for top patterns and low for bottom patterns
+            fenxing_data contains the DataFrame values of pattern points
             '''
             # print fenxing_type, fenxing_time, fenxing_plot, fenxing_data
-            # 判断趋势是否反转，并买进
+            # Determine whether the trend has reversed and buy
             if len(fenxing_type)>7:
                 if fenxing_type[0] == -1:
-                    location_1 = [i for i,a in enumerate(fenxing_type) if a==1] # 找出1在列表中的所有位置
-                    location_2 = [i for i,a in enumerate(fenxing_type) if a==-1] # 找出-1在列表中的所有位置
-                    # 线段破坏
+                    location_1 = [i for i,a in enumerate(fenxing_type) if a==1] # Find all positions of 1 in the list
+                    location_2 = [i for i,a in enumerate(fenxing_type) if a==-1] # Find all positions of -1 in the list
+                    # Segment destruction
                     case1 = fenxing_data['low'][location_2[0]] > fenxing_data['low'][location_2[1]]
-                    # 线段形成
+                    # Segment formation
                     case2 = fenxing_data['high'][location_1[1]] < fenxing_data['high'][location_1[2]] < fenxing_data['high'][location_1[3]]
                     case3 = fenxing_data['low'][location_2[1]] < fenxing_data['low'][location_2[2]] < fenxing_data['low'][location_2[3]]
-                    # 第i笔中底比第i+2笔顶高(扶助判断条件，根据实测加入之后条件太苛刻，很难有买入机会)
+                    # The bottom of the i-th segment is higher than the top of the i+2-th segment (auxiliary condition, but found too strict in real testing, making buy opportunities rare)
                     case4 = fenxing_data['low'][location_2[1]] > fenxing_data['high'][location_1[3]]
                     if case1 and case2 and case3 :
-                        # 买入
+                        # Buy
                         order_value(security[0],Cash)
 
-            # 每分钟亏损率止损 & 固定止盈
+            # Stop loss based on minute loss rate & fixed profit-taking
             if len(context.portfolio.positions) > 0:
                 for stock in list(context.portfolio.positions.keys()):
                     price = data[stock].pre_close
@@ -78,67 +78,66 @@ def handle_data(context, data):
                     elif (price-avg_cost)/avg_cost >= 0.18 :
                         order_target(stock, 0)
 
-
-'''下面为各类函数'''
+'''Below are various functions'''
 ################################################################
 
 def sell2(context):
-    ## 亏损率止损 & 固定止盈
+    ## Stop loss based on loss rate & fixed take profit
     if len(context.portfolio.positions) > 0:
         for stock in list(context.portfolio.positions.keys()):
-            hist = attribute_history(stock, 1, '1d', 'close',df=False)
+            hist = attribute_history(stock, 1, '1d', 'close', df=False)
             price = hist['close'][0]
             avg_cost = context.portfolio.positions[stock].avg_cost
-            if (price-avg_cost)/avg_cost <= -0.1 :
+            if (price - avg_cost) / avg_cost <= -0.1:
                 order_target(stock, 0)
-            elif (price-avg_cost)/avg_cost >= 0.2 :
+            elif (price - avg_cost) / avg_cost >= 0.2:
                 order_target(stock, 0)
 
 def dapan_stoploss(context):
-    ## 根据局大盘止损，具体用法详见dp_stoploss函数说明
+    ## Stop loss based on market conditions, see the dp_stoploss function description for details
     stoploss = dp_stoploss(kernel=2, n=10, zs=0.05)
     if stoploss:
-        if len(context.portfolio.positions)>0:
+        if len(context.portfolio.positions) > 0:
             for stock in list(context.portfolio.positions.keys()):
                 order_target(stock, 0)
         # return
 
 def sell(context):
-    # 根据跌幅卖出
-    if len(context.portfolio.positions)>0:
+    # Sell based on price drop
+    if len(context.portfolio.positions) > 0:
         for stock in list(context.portfolio.positions.keys()):
-            hist = attribute_history(stock, 3, '1d', 'close',df=False)
-            if ((1-float(hist['close'][-1]/hist['close'][0])) >= 0.15):
-                order_target(stock,0)
+            hist = attribute_history(stock, 3, '1d', 'close', df=False)
+            if ((1 - float(hist['close'][-1] / hist['close'][0])) >= 0.15):
+                order_target(stock, 0)
 
 def recognition_fenxing(after_baohan):
     '''
-    从后往前找
-    返回值：
-    fenxing_type 记录分型点的类型，1为顶分型，-1为底分型
-    fenxing_time 记录分型点的时间
-    fenxing_plot 记录点的数值，为顶分型去high值，为底分型去low值
-    fenxing_data 分型点的DataFrame值
+    Find from back to front
+    Return values:
+    fenxing_type - Records the type of pattern point, 1 for top pattern, -1 for bottom pattern
+    fenxing_time - Records the time of the pattern point
+    fenxing_plot - Records the value of the point, high value for top pattern, low value for bottom pattern
+    fenxing_data - DataFrame value of the pattern point
     '''
-    ## 找出顶和底
-    temp_num = 0 #上一个顶或底的位置
-    temp_high = 0 #上一个顶的high值
-    temp_low = 0 #上一个底的low值
-    temp_type = 0 # 上一个记录位置的类型
+    ## Identify tops and bottoms
+    temp_num = 0  # Position of the previous top or bottom
+    temp_high = 0  # High value of the previous top
+    temp_low = 0  # Low value of the previous bottom
+    temp_type = 0  # Type of the previously recorded position
     end = len(after_baohan['high'])
-    i = end-2
-    fenxing_type = [] # 记录分型点的类型，1为顶分型，-1为底分型
-    fenxing_time = [] # 记录分型点的时间
-    fenxing_plot = [] # 记录点的数值，为顶分型去high值，为底分型去low值
-    fenxing_data = {'high':[],'low':[]} # 分型点的DataFrame值
+    i = end - 2
+    fenxing_type = []  # Records the type of pattern point, 1 for top pattern, -1 for bottom pattern
+    fenxing_time = []  # Records the time of the pattern point
+    fenxing_plot = []  # Records the value of the point, high value for top pattern, low value for bottom pattern
+    fenxing_data = {'high': [], 'low': []}  # DataFrame value of the pattern point
     while (i >= 1):
-        if len(fenxing_type)>8:
+        if len(fenxing_type) > 8:
             break
         else:
-            case1 = after_baohan['high'][i-1]<after_baohan['high'][i] and after_baohan['high'][i]>after_baohan['high'][i+1] #顶分型
-            case2 = after_baohan['low'][i-1]>after_baohan['low'][i] and after_baohan['low'][i]<after_baohan['low'][i+1] #底分型
+            case1 = after_baohan['high'][i-1] < after_baohan['high'][i] and after_baohan['high'][i] > after_baohan['high'][i+1]  # Top pattern
+            case2 = after_baohan['low'][i-1] > after_baohan['low'][i] and after_baohan['low'][i] < after_baohan['low'][i+1]  # Bottom pattern
             if case1:
-                if temp_type == 1: # 如果上一个分型为顶分型，则进行比较，选取高点更高的分型
+                if temp_type == 1:  # If the previous pattern is a top pattern, compare and select the one with a higher peak
                     if after_baohan['high'][i] <= temp_high:
                         i -= 1
                     else:
@@ -146,12 +145,11 @@ def recognition_fenxing(after_baohan):
                         temp_num = i
                         temp_type = 1
                         i -= 4
-                elif temp_type == 2: # 如果上一个分型为底分型，则记录上一个分型，用当前分型与后面的分型比较，选取同向更极端的分型
-                    if temp_low >= after_baohan['high'][i]: # 如果上一个底分型的底比当前顶分型的顶高，则跳过当前顶分型。
+                elif temp_type == 2:  # If the previous pattern is a bottom pattern, record the previous pattern, compare with the current one, and select the more extreme pattern in the same direction
+                    if temp_low >= after_baohan['high'][i]:  # If the bottom of the previous bottom pattern is higher than the peak of the current top pattern, skip the current top pattern.
                         i -= 1
                     else:
                         fenxing_type.append(-1)
-                        # fenxing_time.append(after_baohan.index[temp_num].strftime("%Y-%m-%d %H:%M:%S"))
                         fenxing_data['high'].append(after_baohan['high'][temp_num])
                         fenxing_data['low'].append(after_baohan['low'][temp_num])
                         fenxing_plot.append(after_baohan['high'][i])
@@ -160,7 +158,7 @@ def recognition_fenxing(after_baohan):
                         temp_type = 1
                         i -= 4
                 else:
-                    if (after_baohan['low'][i-2]>after_baohan['low'][i-1] and after_baohan['low'][i-1]<after_baohan['low'][i]):
+                    if (after_baohan['low'][i-2] > after_baohan['low'][i-1] and after_baohan['low'][i-1] < after_baohan['low'][i]):
                         temp_low = after_baohan['low'][i]
                         temp_num = i-1
                         temp_type = 2
@@ -170,9 +168,8 @@ def recognition_fenxing(after_baohan):
                         temp_num = i
                         temp_type = 1
                         i -= 4
-
             elif case2:
-                if temp_type == 2: # 如果上一个分型为底分型，则进行比较，选取低点更低的分型
+                if temp_type == 2:  # If the previous pattern is a bottom pattern, compare and select the one with a lower bottom
                     if after_baohan['low'][i] >= temp_low:
                         i -= 1
                     else:
@@ -180,12 +177,11 @@ def recognition_fenxing(after_baohan):
                         temp_num = i
                         temp_type = 2
                         i -= 4
-                elif temp_type == 1: # 如果上一个分型为顶分型，则记录上一个分型，用当前分型与后面的分型比较，选取同向更极端的分型
-                    if temp_high <= after_baohan['low'][i]: # 如果上一个顶分型的底比当前底分型的底低，则跳过当前底分型。
+                elif temp_type == 1:  # If the previous pattern is a top pattern, record the previous pattern, compare with the current one, and select the more extreme pattern in the same direction
+                    if temp_high <= after_baohan['low'][i]:  # If the peak of the previous top pattern is lower than the bottom of the current bottom pattern, skip the current bottom pattern.
                         i -= 1
                     else:
                         fenxing_type.append(1)
-                        # fenxing_time.append(after_baohan.index[temp_num].strftime("%Y-%m-%d %H:%M:%S"))
                         fenxing_data['high'].append(after_baohan['high'][temp_num])
                         fenxing_data['low'].append(after_baohan['low'][temp_num])
                         fenxing_plot.append(after_baohan['low'][i])
@@ -194,7 +190,7 @@ def recognition_fenxing(after_baohan):
                         temp_type = 2
                         i -= 4
                 else:
-                    if (after_baohan['high'][i-2]<after_baohan['high'][i-1] and after_baohan['high'][i-1]>after_baohan['high'][i]):
+                    if (after_baohan['high'][i-2] < after_baohan['high'][i-1] and after_baohan['high'][i-1] > after_baohan['high'][i]):
                         temp_high = after_baohan['high'][i]
                         temp_num = i-1
                         temp_type = 1
@@ -210,12 +206,12 @@ def recognition_fenxing(after_baohan):
 
 def recognition_baohan(Input_k, zoushi, after_baohan):
     '''
-    判断两根k线的包含关系
-    temp_data 包含处理后最后一个k线的数据
-    zoushi 包含关系处理中关于走势的记录
-    Input_k 是temp_data与新n分钟k线的合集
-    zoushi： 3-持平 4-向下 5-向上
-    after_baohan 处理之后的k线
+    Determine the containment relationship between two candlesticks
+    temp_data: Processed data of the last candlestick
+    zoushi: Records related to trend processing
+    Input_k: Combination of temp_data and new n-minute candlestick data
+    zoushi: 3 - Neutral, 4 - Downward, 5 - Upward
+    after_baohan: Processed candlestick data after merging
     '''
     import pandas as pd
 
@@ -223,15 +219,16 @@ def recognition_baohan(Input_k, zoushi, after_baohan):
     temp_data['high'] = Input_k['high'][0]
     temp_data['low'] = Input_k['low'][0]
 
-    case1_1 = temp_data['high'] > Input_k['high'][1] and temp_data['low'] < Input_k['low'][1]# 第1根包含第2根
-    case1_2 = temp_data['high'] > Input_k['high'][1] and temp_data['low'] == Input_k['low'][1]# 第1根包含第2根
-    case1_3 = temp_data['high'] == Input_k['high'][1] and temp_data['low'] < Input_k['low'][1]# 第1根包含第2根
-    case2_1 = temp_data['high'] < Input_k['high'][1] and temp_data['low'] > Input_k['low'][1] # 第2根包含第1根
-    case2_2 = temp_data['high'] < Input_k['high'][1] and temp_data['low'] == Input_k['low'][1] # 第2根包含第1根
-    case2_3 = temp_data['high'] == Input_k['high'][1] and temp_data['low'] > Input_k['low'][1] # 第2根包含第1根
-    case3 = temp_data['high'] == Input_k['high'][1] and temp_data['low'] == Input_k['low'][1] # 第1根等于第2根
-    case4 = temp_data['high'] > Input_k['high'][1] and temp_data['low'] > Input_k['low'][1] # 向下趋势
-    case5 = temp_data['high'] < Input_k['high'][1] and temp_data['low'] < Input_k['low'][1] # 向上趋势
+    case1_1 = temp_data['high'] > Input_k['high'][1] and temp_data['low'] < Input_k['low'][1] # The first candlestick contains the second one
+    case1_2 = temp_data['high'] > Input_k['high'][1] and temp_data['low'] == Input_k['low'][1] # The first candlestick contains the second one
+    case1_3 = temp_data['high'] == Input_k['high'][1] and temp_data['low'] < Input_k['low'][1] # The first candlestick contains the second one
+    case2_1 = temp_data['high'] < Input_k['high'][1] and temp_data['low'] > Input_k['low'][1] # The second candlestick contains the first one
+    case2_2 = temp_data['high'] < Input_k['high'][1] and temp_data['low'] == Input_k['low'][1] # The second candlestick contains the first one
+    case2_3 = temp_data['high'] == Input_k['high'][1] and temp_data['low'] > Input_k['low'][1] # The second candlestick contains the first one
+    case3 = temp_data['high'] == Input_k['high'][1] and temp_data['low'] == Input_k['low'][1] # The first candlestick is equal to the second one
+    case4 = temp_data['high'] > Input_k['high'][1] and temp_data['low'] > Input_k['low'][1] # Downward trend
+    case5 = temp_data['high'] < Input_k['high'][1] and temp_data['low'] < Input_k['low'][1] # Upward trend
+    
     if case1_1 or case1_2 or case1_3:
         if zoushi[-1] == 4:
             temp_data['high'] = Input_k['high'][1]
@@ -259,6 +256,7 @@ def recognition_baohan(Input_k, zoushi, after_baohan):
         after_baohan['low'].append(temp_data['low'])
         temp_data['high'] = Input_k['high'][1]
         temp_data['low'] = Input_k['low'][1]
+
     elif case5:
         zoushi.append(5)
         after_baohan['high'].append(temp_data['high'])
@@ -270,11 +268,11 @@ def recognition_baohan(Input_k, zoushi, after_baohan):
 
 def k_initialization(security,num = 10*48,n=5):
     '''
-    读入回测日期之前的多日k线用以判断之前的趋势
-    返回值：
-        temp_data 包含处理后最后一个k线的数据
-        zoushi 包含关系处理中关于走势的记录
-        after_baohan 合并后的k线
+    Read historical multi-day K-lines before the backtest date to judge the previous trend
+    Return values:
+        temp_data contains the processed data of the last K-line
+        zoushi contains the records of trend processing
+        after_baohan merged K-lines
     '''
     import pandas as pd
 
@@ -286,23 +284,23 @@ def k_initialization(security,num = 10*48,n=5):
     stock=security
     k_data = attribute_history(stock, num, str(x),['high', 'low'], df=False)
 
-    ## 判断包含关系
+    ## Judge the inclusion relationship
     after_baohan = {'high':[],'low':[]}
     t['high'] = k_data['high'][0]
     t['low'] = k_data['low'][0]
 
     temp_data = t
-    zoushi = [3] # 3-持平 4-向下 5-向上
+    zoushi = [3] # 3-flat 4-down 5-up
     for i in xrange(num):
-        case1_1 = temp_data['high'] > k_data['high'][i] and temp_data['low'] < k_data['low'][i]# 第1根包含第2根
-        case1_2 = temp_data['high'] > k_data['high'][i] and temp_data['low'] == k_data['low'][i]# 第1根包含第2根
-        case1_3 = temp_data['high'] == k_data['high'][i] and temp_data['low'] < k_data['low'][i]# 第1根包含第2根
-        case2_1 = temp_data['high'] < k_data['high'][i] and temp_data['low'] > k_data['low'][i] # 第2根包含第1根
-        case2_2 = temp_data['high'] < k_data['high'][i] and temp_data['low'] == k_data['low'][i] # 第2根包含第1根
-        case2_3 = temp_data['high'] == k_data['high'][i] and temp_data['low'] > k_data['low'][i] # 第2根包含第1根
-        case3 = temp_data['high'] == k_data['high'][i] and temp_data['low'] == k_data['low'][i] # 第1根等于第2根
-        case4 = temp_data['high'] > k_data['high'][i] and temp_data['low'] > k_data['low'][i] # 向下趋势
-        case5 = temp_data['high'] < k_data['high'][i] and temp_data['low'] < k_data['low'][i] # 向上趋势
+        case1_1 = temp_data['high'] > k_data['high'][i] and temp_data['low'] < k_data['low'][i] # The first contains the second
+        case1_2 = temp_data['high'] > k_data['high'][i] and temp_data['low'] == k_data['low'][i] # The first contains the second
+        case1_3 = temp_data['high'] == k_data['high'][i] and temp_data['low'] < k_data['low'][i] # The first contains the second
+        case2_1 = temp_data['high'] < k_data['high'][i] and temp_data['low'] > k_data['low'][i] # The second contains the first
+        case2_2 = temp_data['high'] < k_data['high'][i] and temp_data['low'] == k_data['low'][i] # The second contains the first
+        case2_3 = temp_data['high'] == k_data['high'][i] and temp_data['low'] > k_data['low'][i] # The second contains the first
+        case3 = temp_data['high'] == k_data['high'][i] and temp_data['low'] == k_data['low'][i] # The first is equal to the second
+        case4 = temp_data['high'] > k_data['high'][i] and temp_data['low'] > k_data['low'][i] # Downward trend
+        case5 = temp_data['high'] < k_data['high'][i] and temp_data['low'] < k_data['low'][i] # Upward trend
         if case1_1 or case1_2 or case1_3:
             if zoushi[-1] == 4:
                 temp_data['high'] = k_data['high'][i]
@@ -341,10 +339,10 @@ def k_initialization(security,num = 10*48,n=5):
 
 def dp_stoploss(kernel=2, n=10, zs=0.03):
     '''
-    方法1：当大盘N日均线(默认60日)与昨日收盘价构成“死叉”，则发出True信号
-    方法2：当大盘N日内跌幅超过zs，则发出True信号
+    Method 1: When the N-day moving average of the market (default 60 days) and the previous day's closing price form a "death cross", it triggers a True signal
+    Method 2: When the market's drop rate over N days exceeds zs, it triggers a True signal
     '''
-    # 止损方法1：根据大盘指数N日均线进行止损
+    # Stop loss method 1: Based on the N-day moving average of the market index for stop loss
     if kernel == 1:
         t = n+2
         hist = attribute_history('000300.XSHG', t, '1d', 'close', df=False)
@@ -356,10 +354,11 @@ def dp_stoploss(kernel=2, n=10, zs=0.03):
             return True
         else:
             return False
-    # 止损方法2：根据大盘指数跌幅进行止损
+    # Stop loss method 2: Based on the market index's drop rate for stop loss
     elif kernel == 2:
-        hist1 = attribute_history('000300.XSHG', n, '1d', 'close',df=False)
+        hist1 = attribute_history('000300.XSHG', n, '1d', 'close', df=False)
         if ((1-float(hist1['close'][-1]/hist1['close'][0])) >= zs):
             return True
         else:
             return False
+
